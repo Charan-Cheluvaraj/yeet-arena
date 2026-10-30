@@ -19,6 +19,7 @@ export interface PlayerPhysicsState {
   dashTimer: number;
   dashCooldownTimer: number;
   hitStunTimer: number;
+  spawnProtectionTimer: number;
   isAlive: boolean;
   isBot: boolean;
 }
@@ -48,6 +49,10 @@ export function updatePlayerMovement(
   if (!player.isAlive) return;
 
   // Timers
+  if (player.spawnProtectionTimer > 0) {
+    player.spawnProtectionTimer = Math.max(0, player.spawnProtectionTimer - dt);
+  }
+
   if (player.dashCooldownTimer > 0) {
     player.dashCooldownTimer = Math.max(0, player.dashCooldownTimer - dt);
   }
@@ -108,8 +113,18 @@ export function updatePlayerMovement(
   player.y += player.vy * dt;
 }
 
-export function resolvePlayerCollisions(players: PlayerPhysicsState[]): void {
+export interface CollisionEvent {
+  p1Id: string;
+  p2Id: string;
+  x: number;
+  y: number;
+  isStrong: boolean;
+}
+
+export function resolvePlayerCollisions(players: PlayerPhysicsState[]): CollisionEvent[] {
+  const events: CollisionEvent[] = [];
   const count = players.length;
+
   for (let i = 0; i < count; i++) {
     const p1 = players[i];
     if (!p1.isAlive) continue;
@@ -135,41 +150,73 @@ export function resolvePlayerCollisions(players: PlayerPhysicsState[]): void {
         p2.x += nx * (overlap * 0.5);
         p2.y += ny * (overlap * 0.5);
 
+        // If either is in spawn protection, no impulse or hit-stun applied
+        const p1Protected = p1.spawnProtectionTimer > 0;
+        const p2Protected = p2.spawnProtectionTimer > 0;
+
+        if (p1Protected && p2Protected) {
+          continue;
+        }
+
+        const isStrong = p1.isDashing || p2.isDashing;
+        events.push({
+          p1Id: p1.id,
+          p2Id: p2.id,
+          x: (p1.x + p2.x) * 0.5,
+          y: (p1.y + p2.y) * 0.5,
+          isStrong,
+        });
+
         // Calculate knockback impulse
-        let knockbackP1: number = GAME_CONSTANTS.BASE_KNOCKBACK;
-        let knockbackP2: number = GAME_CONSTANTS.BASE_KNOCKBACK;
+        const knockbackP1: number = GAME_CONSTANTS.BASE_KNOCKBACK;
+        const knockbackP2: number = GAME_CONSTANTS.BASE_KNOCKBACK;
 
         if (p1.isDashing && !p2.isDashing) {
-          knockbackP2 = GAME_CONSTANTS.DASH_KNOCKBACK;
-          p2.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
-          p2.vx = nx * knockbackP2;
-          p2.vy = ny * knockbackP2;
-          p1.vx = -nx * (knockbackP1 * 0.4);
-          p1.vy = -ny * (knockbackP1 * 0.4);
+          if (!p2Protected) {
+            p2.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
+            p2.vx = nx * GAME_CONSTANTS.DASH_KNOCKBACK;
+            p2.vy = ny * GAME_CONSTANTS.DASH_KNOCKBACK;
+          }
+          if (!p1Protected) {
+            p1.vx = -nx * (knockbackP1 * 0.4);
+            p1.vy = -ny * (knockbackP1 * 0.4);
+          }
         } else if (p2.isDashing && !p1.isDashing) {
-          knockbackP1 = GAME_CONSTANTS.DASH_KNOCKBACK;
-          p1.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
-          p1.vx = -nx * knockbackP1;
-          p1.vy = -ny * knockbackP1;
-          p2.vx = nx * (knockbackP2 * 0.4);
-          p2.vy = ny * (knockbackP2 * 0.4);
+          if (!p1Protected) {
+            p1.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
+            p1.vx = -nx * GAME_CONSTANTS.DASH_KNOCKBACK;
+            p1.vy = -ny * GAME_CONSTANTS.DASH_KNOCKBACK;
+          }
+          if (!p2Protected) {
+            p2.vx = nx * (knockbackP2 * 0.4);
+            p2.vy = ny * (knockbackP2 * 0.4);
+          }
         } else {
           // Both dashing or both regular
           const impulse = (p1.isDashing && p2.isDashing)
             ? GAME_CONSTANTS.DASH_KNOCKBACK
             : GAME_CONSTANTS.BASE_KNOCKBACK;
-          p1.vx = -nx * impulse;
-          p1.vy = -ny * impulse;
-          p2.vx = nx * impulse;
-          p2.vy = ny * impulse;
-          if (p1.isDashing && p2.isDashing) {
-            p1.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
-            p2.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
+
+          if (!p1Protected) {
+            p1.vx = -nx * impulse;
+            p1.vy = -ny * impulse;
+            if (p1.isDashing && p2.isDashing) {
+              p1.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
+            }
+          }
+          if (!p2Protected) {
+            p2.vx = nx * impulse;
+            p2.vy = ny * impulse;
+            if (p1.isDashing && p2.isDashing) {
+              p2.hitStunTimer = GAME_CONSTANTS.HIT_STUN_DURATION;
+            }
           }
         }
       }
     }
   }
+
+  return events;
 }
 
 export function checkEliminations(
@@ -180,6 +227,9 @@ export function checkEliminations(
   const newlyEliminated: string[] = [];
   for (const p of players) {
     if (p.isAlive) {
+      // Protected players cannot be eliminated
+      if (p.spawnProtectionTimer > 0) continue;
+
       if (!isWithinArena({ x: p.x, y: p.y }, arenaCenter, arenaRadius)) {
         p.isAlive = false;
         newlyEliminated.push(p.id);
@@ -187,4 +237,15 @@ export function checkEliminations(
     }
   }
   return newlyEliminated;
+}
+
+export function calculateSuddenDeathRadius(
+  elapsedInSuddenDeath: number,
+  initialRadius: number = GAME_CONSTANTS.ARENA_RADIUS,
+  minRadius: number = GAME_CONSTANTS.SUDDEN_DEATH_MIN_RADIUS,
+  duration: number = GAME_CONSTANTS.SUDDEN_DEATH_SHRINK_DURATION,
+): number {
+  if (elapsedInSuddenDeath <= 0) return initialRadius;
+  const progress = Math.min(1, elapsedInSuddenDeath / duration);
+  return initialRadius - (initialRadius - minRadius) * progress;
 }

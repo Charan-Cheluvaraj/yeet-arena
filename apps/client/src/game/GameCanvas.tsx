@@ -17,6 +17,9 @@ export const GameCanvas: React.FC = () => {
       parent: containerRef.current,
       pixelArt: true,
       roundPixels: true,
+      audio: {
+        noAudio: true, // Prevents AudioContext warnings & lifecycle errors
+      },
       scale: {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -48,4 +51,3 @@ export const GameCanvas: React.FC = () => {
     />
   );
 };
-
