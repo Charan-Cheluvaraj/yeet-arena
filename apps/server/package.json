@@ -1,0 +1,30 @@
+{
+  "name": "@yeet-arena/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.18.23",
+    "@colyseus/schema": "^5.0.8",
+    "@colyseus/tools": "^0.18.11",
+    "@colyseus/ws-transport": "^0.18.4",
+    "@yeet-arena/shared": "*",
+    "colyseus": "^0.18.10",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
